@@ -288,13 +288,16 @@ class FeishuChannel(BaseChannel):
             .log_level(lark.LogLevel.INFO) \
             .build()
         
-        # Create event handler (only register message receive, ignore other events)
-        event_handler = lark.EventDispatcherHandler.builder(
+        # Create event handler (message receive + card action callback)
+        builder = lark.EventDispatcherHandler.builder(
             self.config.encrypt_key or "",
             self.config.verification_token or "",
         ).register_p2_im_message_receive_v1(
             self._on_message_sync
-        ).build()
+        )
+        if hasattr(builder, "register_p2_card_action_trigger"):
+            builder = builder.register_p2_card_action_trigger(self._on_card_action_sync)
+        event_handler = builder.build()
         
         # Create WebSocket client for long connection
         self._ws_client = lark.ws.Client(
@@ -757,3 +760,92 @@ class FeishuChannel(BaseChannel):
 
         except Exception as e:
             logger.error("Error processing Feishu message: {}", e)
+
+    def _on_card_action_sync(self, event: Any) -> Any:
+        """
+        Handle Feishu card action callbacks (button clicks, form submissions).
+
+        Converts the card action into an InboundMessage so the agent can process
+        approval decisions (approve/reject/edit) via the exchange-email skill.
+        """
+        if self._loop and self._loop.is_running():
+            import concurrent.futures
+            future = asyncio.run_coroutine_threadsafe(self._on_card_action(event), self._loop)
+            try:
+                return future.result(timeout=10)
+            except (concurrent.futures.TimeoutError, Exception) as e:
+                logger.error("Card action handler error: {}", e)
+        return None
+
+    async def _on_card_action(self, event: Any) -> Any:
+        """Process card action and forward to agent as an InboundMessage."""
+        try:
+            if not hasattr(event, "event") or not event.event.action:
+                return None
+
+            action_value = event.event.action.value
+            if isinstance(action_value, str):
+                try:
+                    data = json.loads(action_value)
+                except (json.JSONDecodeError, TypeError):
+                    data = {}
+            else:
+                data = action_value or {}
+
+            action_type = data.get("action", "")
+            email_id = data.get("id", "")
+            user_id = event.event.operator.open_id if event.event.operator else "unknown"
+            message_id = None
+            if hasattr(event.event, "context") and hasattr(event.event.context, "open_message_id"):
+                message_id = event.event.context.open_message_id
+
+            if not action_type:
+                return None
+
+            form_values = {}
+            if hasattr(event.event.action, "form_value") and event.event.action.form_value:
+                form_values = event.event.action.form_value
+
+            content = (
+                f"[Feishu Card Action]\n"
+                f"action: {action_type}\n"
+                f"email_id: {email_id}\n"
+                f"user_id: {user_id}\n"
+                f"message_id: {message_id or 'unknown'}"
+            )
+            if form_values:
+                content += f"\nform_values: {json.dumps(form_values, ensure_ascii=False)}"
+
+            metadata = {
+                "card_action": True,
+                "action_type": action_type,
+                "email_id": email_id,
+                "user_id": user_id,
+                "message_id": message_id,
+                "form_values": form_values,
+            }
+
+            chat_id = self.config.allow_from[0] if self.config.allow_from else user_id
+
+            await self._handle_message(
+                sender_id=user_id,
+                chat_id=chat_id,
+                content=content,
+                metadata=metadata,
+            )
+
+            logger.info("Card action forwarded to agent: action={}, email_id={}", action_type, email_id)
+
+            if action_type == "approve":
+                return {"toast": {"type": "success", "content": "审批请求已提交"}}
+            elif action_type == "reject":
+                return {"toast": {"type": "info", "content": "已拒绝该拟稿"}}
+            elif action_type == "mark_read":
+                return {"toast": {"type": "success", "content": "已标记为已阅"}}
+            elif action_type in ("edit_draft", "edit_to", "edit_cc"):
+                return {"toast": {"type": "info", "content": "编辑请求已收到"}}
+            return None
+
+        except Exception as e:
+            logger.error("Error handling card action: {}", e)
+            return None
