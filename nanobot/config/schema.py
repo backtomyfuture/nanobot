@@ -184,6 +184,16 @@ class QQConfig(Base):
     allow_from: list[str] = Field(default_factory=list)  # Allowed user openids (empty = public access)
 
 
+class QdrantConfig(Base):
+    """Qdrant vector search configuration (used by Exchange channel for email RAG)."""
+
+    url: str = "http://localhost:6333"
+    embedding_api_key: str = ""
+    embedding_base_url: str = ""
+    embedding_model: str = ""
+    collection_name: str = "emails"
+
+
 class ExchangeChannelConfig(Base):
     """Exchange email channel configuration (webhook + polling)."""
 
@@ -202,16 +212,7 @@ class ExchangeChannelConfig(Base):
     polling_interval: int = 300  # Seconds between polls (0 = disabled)
     notify_channel: str = "feishu"  # Channel to send notifications to
     notify_chat_id: str = ""  # Chat ID for notifications
-
-
-class QdrantToolConfig(Base):
-    """Qdrant vector search tool configuration."""
-
-    url: str = "http://localhost:6333"
-    embedding_api_key: str = ""
-    embedding_base_url: str = ""
-    embedding_model: str = ""
-    collection_name: str = "emails"
+    qdrant: QdrantConfig = Field(default_factory=QdrantConfig)  # Qdrant RAG config
 
 
 class ChannelsConfig(Base):
@@ -333,7 +334,6 @@ class ToolsConfig(Base):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
-    qdrant: QdrantToolConfig = Field(default_factory=QdrantToolConfig)
 
 
 class Config(BaseSettings):

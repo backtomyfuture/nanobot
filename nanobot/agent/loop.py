@@ -60,7 +60,6 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
-        qdrant_config: Any | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -92,7 +91,6 @@ class AgentLoop:
             restrict_to_workspace=restrict_to_workspace,
         )
 
-        self._qdrant_config = qdrant_config
         self._running = False
         self._mcp_servers = mcp_servers or {}
         self._mcp_stack: AsyncExitStack | None = None
@@ -162,15 +160,14 @@ class AgentLoop:
             self.tools.register(EmailStateWriteTool())
             self.tools.register(EmailStateListTool())
 
-            self._register_qdrant_tools()
+            self._register_qdrant_tools(exchange_cfg.qdrant)
             self._register_feishu_card_tools(exchange_cfg)
             logger.info("Exchange email tools registered")
         except Exception as e:
             logger.warning("Failed to register exchange tools: {}", e)
 
-    def _register_qdrant_tools(self) -> None:
-        """Register Qdrant search/ingest tools if qdrant config is available."""
-        cfg = self._qdrant_config
+    def _register_qdrant_tools(self, cfg: Any) -> None:
+        """Register Qdrant search/ingest tools if qdrant config is provided."""
         if cfg is None:
             return
         try:
