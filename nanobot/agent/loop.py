@@ -120,6 +120,46 @@ class AgentLoop:
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
+        self._register_exchange_tools()
+
+    def _register_exchange_tools(self) -> None:
+        """Conditionally register Exchange email tools when the channel is enabled."""
+        if not self.channels_config or not self.channels_config.exchange.enabled:
+            return
+        try:
+            from nanobot.agent.tools.email_classifier import EmailClassifierTool
+            from nanobot.agent.tools.email_state import (
+                EmailStateListTool,
+                EmailStateReadTool,
+                EmailStateWriteTool,
+            )
+            from nanobot.agent.tools.exchange_api import (
+                ExchangeForwardTool,
+                ExchangeMarkReadTool,
+                ExchangeReplyTool,
+            )
+            from nanobot.channels.exchange import ExchangeClient
+
+            exchange_cfg = self.channels_config.exchange
+            client = ExchangeClient(exchange_cfg)
+
+            async def _llm_call(messages, temperature=0, **kw):
+                resp = await self.provider.chat(
+                    messages=messages, model=self.model,
+                    temperature=temperature, max_tokens=2048,
+                )
+                return resp.content or ""
+
+            self.tools.register(EmailClassifierTool(llm_call=_llm_call))
+            self.tools.register(ExchangeReplyTool(exchange_client=client))
+            self.tools.register(ExchangeForwardTool(exchange_client=client))
+            self.tools.register(ExchangeMarkReadTool(exchange_client=client))
+            self.tools.register(EmailStateReadTool())
+            self.tools.register(EmailStateWriteTool())
+            self.tools.register(EmailStateListTool())
+            logger.info("Exchange email tools registered")
+        except Exception as e:
+            logger.warning("Failed to register exchange tools: {}", e)
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
