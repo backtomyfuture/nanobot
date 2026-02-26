@@ -72,15 +72,24 @@ Handle each action:
 - **save_draft_only**: Read the email state, create an Exchange draft via exchange tools, update card to "已存草稿"
 - **cancel_edit**: Rebuild the approval card in view mode (no changes)
 
+## Step 9: Index Sent Reply
+
+After successfully sending a reply or forward (approve action in Step 8), use `qdrant_ingest` to index the sent content:
+- email_id: "reply_{original_email_id}"
+- subject: "Re: {original_subject}"
+- sender: "me"
+- body: the draft content that was sent
+- thread_id: same as original email (if available)
+
+This ensures future RAG searches find your past replies for style consistency.
+
 ## Daily Summary
 
-When asked to generate a daily email summary (e.g. via cron task "生成今日邮件处理摘要"), use `email_state_list` to get today's processed emails and produce a summary report:
-- Total emails processed
-- Breakdown by priority and intent
-- List of pending items (status=waiting_approval)
-- Any errors
-
-Send the summary to the user via the `message` tool.
+When asked to generate a daily email summary, refer to the `daily-summary` skill for the full workflow:
+1. Use `email_state_list` to get today's records
+2. Group by status, priority, and intent
+3. Format a structured report
+4. Send via `message` tool or `send_notification_card`
 
 ## Important Notes
 
@@ -88,5 +97,6 @@ Send the summary to the user via the `message` tool.
 - The email body may be very long; focus on the key content for classification
 - When replying, use the language matching the original email
 - Never fabricate information in replies; if unsure, ask the user
-- Use `qdrant_ingest` for every email to continuously build the knowledge base
+- Use `qdrant_ingest` for every incoming email AND every sent reply to build the knowledge base
+- For card-based notifications, prefer `send_approval_card`/`send_notification_card` over plain text
 - The `message` tool can send to any channel; use the notification channel configured in the exchange settings
