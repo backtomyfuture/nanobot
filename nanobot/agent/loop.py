@@ -60,6 +60,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        qdrant_config: Any | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -91,6 +92,7 @@ class AgentLoop:
             restrict_to_workspace=restrict_to_workspace,
         )
 
+        self._qdrant_config = qdrant_config
         self._running = False
         self._mcp_servers = mcp_servers or {}
         self._mcp_stack: AsyncExitStack | None = None
@@ -128,6 +130,7 @@ class AgentLoop:
             return
         try:
             from nanobot.agent.tools.email_classifier import EmailClassifierTool
+            from nanobot.agent.tools.email_drafter import EmailDrafterTool
             from nanobot.agent.tools.email_state import (
                 EmailStateListTool,
                 EmailStateReadTool,
@@ -151,15 +154,48 @@ class AgentLoop:
                 return resp.content or ""
 
             self.tools.register(EmailClassifierTool(llm_call=_llm_call))
+            self.tools.register(EmailDrafterTool(llm_call=_llm_call))
             self.tools.register(ExchangeReplyTool(exchange_client=client))
             self.tools.register(ExchangeForwardTool(exchange_client=client))
             self.tools.register(ExchangeMarkReadTool(exchange_client=client))
             self.tools.register(EmailStateReadTool())
             self.tools.register(EmailStateWriteTool())
             self.tools.register(EmailStateListTool())
+
+            self._register_qdrant_tools()
             logger.info("Exchange email tools registered")
         except Exception as e:
             logger.warning("Failed to register exchange tools: {}", e)
+
+    def _register_qdrant_tools(self) -> None:
+        """Register Qdrant search/ingest tools if qdrant config is available."""
+        cfg = self._qdrant_config
+        if cfg is None:
+            return
+        try:
+            from nanobot.agent.tools.qdrant_retriever import (
+                QdrantIngestTool,
+                QdrantSearchTool,
+                _EmbeddingHelper,
+            )
+            qdrant_url = getattr(cfg, "url", "")
+            collection = getattr(cfg, "collection_name", "emails")
+            emb_key = getattr(cfg, "embedding_api_key", "")
+            emb_url = getattr(cfg, "embedding_base_url", "")
+            emb_model = getattr(cfg, "embedding_model", "")
+
+            if not emb_url or not emb_model:
+                logger.info("Qdrant embedding config incomplete, qdrant tools not registered")
+                return
+
+            embedder = _EmbeddingHelper(api_key=emb_key, base_url=emb_url, model=emb_model)
+            self.tools.register(QdrantSearchTool(qdrant_url, collection, embedder))
+            self.tools.register(QdrantIngestTool(qdrant_url, collection, embedder))
+            logger.info("Qdrant tools registered (url={}, collection={})", qdrant_url, collection)
+        except ImportError:
+            logger.info("Qdrant tools skipped: qdrant-client or openai not installed")
+        except Exception as e:
+            logger.warning("Failed to register qdrant tools: {}", e)
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""

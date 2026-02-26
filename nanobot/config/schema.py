@@ -333,6 +333,7 @@ class ToolsConfig(Base):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+    qdrant: QdrantToolConfig = Field(default_factory=QdrantToolConfig)
 
 
 class Config(BaseSettings):
