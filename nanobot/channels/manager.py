@@ -125,16 +125,15 @@ class ChannelManager:
             except ImportError as e:
                 logger.warning("Slack channel not available: {}", e)
 
-        # Exchange channel
-        if self.config.channels.exchange.enabled:
-            try:
-                from nanobot.channels.exchange import ExchangeChannel
-                self.channels["exchange"] = ExchangeChannel(
-                    self.config.channels.exchange, self.bus
-                )
+        # Exchange channel (self-contained config from ~/.nanobot/exchange.json)
+        try:
+            from nanobot.channels.exchange import ExchangeChannel, load_exchange_config
+            exchange_cfg = load_exchange_config()
+            if exchange_cfg.enabled:
+                self.channels["exchange"] = ExchangeChannel(exchange_cfg, self.bus)
                 logger.info("Exchange channel enabled")
-            except ImportError as e:
-                logger.warning("Exchange channel not available: {}", e)
+        except (ImportError, Exception) as e:
+            logger.debug("Exchange channel not loaded: {}", e)
 
         # QQ channel
         if self.config.channels.qq.enabled:

@@ -184,37 +184,6 @@ class QQConfig(Base):
     allow_from: list[str] = Field(default_factory=list)  # Allowed user openids (empty = public access)
 
 
-class QdrantConfig(Base):
-    """Qdrant vector search configuration (used by Exchange channel for email RAG)."""
-
-    url: str = "http://localhost:6333"
-    embedding_api_key: str = ""
-    embedding_base_url: str = ""
-    embedding_model: str = ""
-    collection_name: str = "emails"
-
-
-class ExchangeChannelConfig(Base):
-    """Exchange email channel configuration (webhook + polling)."""
-
-    enabled: bool = False
-    api_url: str = ""  # Exchange API base URL
-    api_key: str = ""  # Exchange API auth key
-    account_id: int = 0  # Exchange account ID
-    account_email: str = ""  # Current user's email (for identifying "me")
-    webhook_secret: str = ""  # HMAC-SHA256 webhook signature secret
-    webhook_port: int = 0  # HTTP port for webhook receiver (0 = disabled)
-    ssl_verify: bool = False  # Verify SSL certs for Exchange API
-    folders_full: list[str] = Field(default_factory=lambda: ["Inbox"])  # Full AI pipeline
-    folders_archive: list[str] = Field(default_factory=list)  # Archive-only (ingest, no AI)
-    folder_sent_items: str = "Sent Items"
-    folder_drafts: str = "Drafts"
-    polling_interval: int = 300  # Seconds between polls (0 = disabled)
-    notify_channel: str = "feishu"  # Channel to send notifications to
-    notify_chat_id: str = ""  # Chat ID for notifications
-    qdrant: QdrantConfig = Field(default_factory=QdrantConfig)  # Qdrant RAG config
-
-
 class ChannelsConfig(Base):
     """Configuration for chat channels."""
 
@@ -230,7 +199,6 @@ class ChannelsConfig(Base):
     slack: SlackConfig = Field(default_factory=SlackConfig)
     qq: QQConfig = Field(default_factory=QQConfig)
     matrix: MatrixConfig = Field(default_factory=MatrixConfig)
-    exchange: ExchangeChannelConfig = Field(default_factory=ExchangeChannelConfig)
 
 
 class AgentDefaults(Base):

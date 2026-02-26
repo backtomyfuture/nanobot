@@ -1,102 +1,91 @@
 # Exchange Email Processing
 
-You have access to tools for processing Exchange emails. When you receive a message from the `exchange` channel (starting with `[Exchange Email Received]`), follow this workflow:
+When you receive a message from the `exchange` channel (starting with `[Exchange Email Received]`), follow this workflow. All tools prefixed with `mcp_exchange_` are provided by the Exchange MCP server.
 
 ## Step 1: Check State
 
-Use `email_state_read` with the email ID to check if this email has been processed before. If status is anything other than `not_found`, skip processing unless explicitly asked to reprocess.
+Use `mcp_exchange-tools_email_state_read` with the email ID. If status is not `not_found`, skip unless asked to reprocess.
 
-## Step 2: Classify
+## Step 2: Classify (Agent Direct — no tool needed)
 
-Use `classify_email` with the email's subject, body, and sender. This returns a JSON with:
-- `priority`: P0 (urgent) to P3 (low)
-- `need_reply`: whether a reply is expected
-- `intent`: 咨询 / 审批 / 通知 / 垃圾邮件
-- `summary`: one-line summary
+Analyze the email and produce a classification. Output a JSON block in your reasoning:
 
-Save the classification using `email_state_write` with status `classified`.
+```json
+{"priority": "P0|P1|P2|P3", "need_reply": true/false, "intent": "咨询|审批|通知|垃圾邮件", "summary": "一句话摘要", "reasoning": "分类理由"}
+```
+
+Priority definitions:
+- **P0**: Urgent and important — senior leadership, urgent approvals
+- **P1**: Important, reply within the day — business emails requiring response
+- **P2**: Routine — general communication, information sync
+- **P3**: Low priority — notifications, ads, automated emails
+
+Save using `mcp_exchange-tools_email_state_write` with status `classified` and the classification object.
 
 ## Step 3: Ingest to Knowledge Base
 
-Use `qdrant_ingest` to index the email into the vector database. Provide: email_id, subject, sender, body, and thread_id (if available from the email's conversation_id field).
+Use `mcp_exchange-tools_qdrant_ingest` to index the email (email_id, subject, sender, body, thread_id if available).
 
 ## Step 4: Decide Action
 
-Based on classification:
+Based on your classification:
 
-- **need_reply = true**: Proceed to Step 5 (retrieve context and draft a reply)
-- **priority = P0 or P1, need_reply = false**: Use `message` tool to notify the user on the configured notification channel with a brief summary, then save state as `skipped`
-- **intent = 垃圾邮件 or priority = P3**: Save state as `skipped`, no notification needed
-- **Otherwise (P2 通知 etc)**: Send a brief notification, save as `skipped`
+- **need_reply = true**: Go to Step 5
+- **P0/P1, need_reply = false**: Send notification card (Step 7b), save as `skipped`
+- **垃圾邮件 or P3**: Save as `skipped`, no notification
+- **Otherwise**: Brief notification via `message` tool, save as `skipped`
 
-## Step 5: Retrieve Historical Context
+## Step 5: Retrieve Context
 
-Use `qdrant_search` to find relevant historical emails:
-1. If the email has a thread_id/conversation_id, search by thread first
-2. Then search semantically using the subject + first 500 chars of body
-3. Include the sender filter for more relevant results
+Use `mcp_exchange-tools_qdrant_search` to find relevant historical emails:
+- Search by thread_id if available
+- Then semantic search using subject + body excerpt
+- Include sender filter for relevance
 
-Format the search results as context text for the drafter.
+## Step 6: Draft Reply (Agent Direct — no tool needed)
 
-## Step 6: Draft Reply
+Compose a professional reply draft based on:
+- The original email content
+- Historical context from Step 5
+- The sender's language (match it)
 
-Use `draft_email` with:
-- The email's subject, sender, and body
-- The context from Step 5 (formatted as text)
-- Optional modifier if the routing/classification suggests a special tone
+Guidelines:
+- Address the sender's questions/requests directly
+- Professional, courteous tone
+- Concise but complete
+- Do NOT include the original email or sender info (system appends it)
+- Do NOT include explanations or thinking — only the reply body
 
-Save the draft using `email_state_write` with status `drafted` and the `draft` field.
+Save draft via `mcp_exchange-tools_email_state_write` with status `drafted` and the `draft` field.
 
-## Step 7: Notify for Approval (Interactive Card)
+## Step 7a: Send Approval Card
 
-Use `send_approval_card` to send a Feishu interactive card with:
-- email_id, draft, subject, sender
-- summary, priority, intent, reasoning from classification
+Use `mcp_exchange-tools_send_approval_card` with: email_id, draft, subject, sender, summary, priority, intent, reasoning.
 
-The card displays the email summary, draft preview, and interactive buttons (approve/reject/edit/save-draft). Save the returned message_id in the email state for later card updates.
+Save the returned `message_id` via `mcp_exchange-tools_email_state_write` (add `message_id` field). Set status to `waiting_approval`.
 
-Update state to `waiting_approval`.
+## Step 7b: Send Notification Card (read-only)
 
-For important emails that DON'T need a reply (P0/P1, need_reply=false), use `send_notification_card` instead (read-only card with "mark read" button).
+For important emails that don't need reply, use `mcp_exchange-tools_send_notification_card` with: email_id, subject, sender, summary, priority, reasoning.
 
-## Step 8: Handle Card Action Callbacks
+## Step 8: Handle Card Actions
 
-When you receive a message starting with `[Feishu Card Action]`, it means the user clicked a button on the card. Parse the action_type and email_id from the message.
+When you receive `[Feishu Card Action]`, parse action_type and email_id:
 
-Handle each action:
-
-- **approve**: Read the email state (get draft), use `exchange_reply` to send it, use `update_feishu_card` to update the card to "已批准" status, update state to `sent`
-- **reject**: Use `update_feishu_card` to show "已拒绝", update state to `rejected`
-- **mark_read**: Use `update_feishu_card` to show "已阅", update state to `archived`
-- **edit_draft**: The form_values contain the new draft text in "draft_input". Save the new draft to email state, then rebuild and send a new approval card with the updated draft
-- **save_draft_only**: Read the email state, create an Exchange draft via exchange tools, update card to "已存草稿"
-- **cancel_edit**: Rebuild the approval card in view mode (no changes)
-
-## Step 9: Index Sent Reply
-
-After successfully sending a reply or forward (approve action in Step 8), use `qdrant_ingest` to index the sent content:
-- email_id: "reply_{original_email_id}"
-- subject: "Re: {original_subject}"
-- sender: "me"
-- body: the draft content that was sent
-- thread_id: same as original email (if available)
-
-This ensures future RAG searches find your past replies for style consistency.
+- **approve**: Read state (get draft + message_id), call `mcp_exchange-tools_exchange_reply` with the draft, then `mcp_exchange-tools_update_feishu_card` to show "已批准", update state to `sent`. Also ingest the sent reply via `mcp_exchange-tools_qdrant_ingest` (sender="me", subject="Re: ...").
+- **reject**: Update card to "已拒绝", state to `rejected`
+- **mark_read**: Update card to "已阅", state to `archived`
+- **edit_draft**: Extract new text from form_values.draft_input, save to state, send a new approval card with updated draft
+- **save_draft_only**: Update card to "已存草稿", state to `draft_saved`
 
 ## Daily Summary
 
-When asked to generate a daily email summary, refer to the `daily-summary` skill for the full workflow:
-1. Use `email_state_list` to get today's records
-2. Group by status, priority, and intent
-3. Format a structured report
-4. Send via `message` tool or `send_notification_card`
+When asked to generate a daily email summary, refer to the `daily-summary` skill.
 
-## Important Notes
+## Notes
 
-- Always save state after each step to enable recovery from failures
-- The email body may be very long; focus on the key content for classification
-- When replying, use the language matching the original email
-- Never fabricate information in replies; if unsure, ask the user
-- Use `qdrant_ingest` for every incoming email AND every sent reply to build the knowledge base
-- For card-based notifications, prefer `send_approval_card`/`send_notification_card` over plain text
-- The `message` tool can send to any channel; use the notification channel configured in the exchange settings
+- Save state after each step for failure recovery
+- Match the original email's language in replies
+- Never fabricate information; ask the user if unsure
+- Ingest every incoming email AND every sent reply to build the knowledge base
+- Prefer card tools (`send_approval_card`/`send_notification_card`) over plain text for notifications
