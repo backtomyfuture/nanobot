@@ -47,37 +47,30 @@ Use `draft_email` with:
 
 Save the draft using `email_state_write` with status `drafted` and the `draft` field.
 
-## Step 7: Notify for Approval
+## Step 7: Notify for Approval (Interactive Card)
 
-Send a notification to the user using the `message` tool with the configured notification channel and chat_id. Format the notification as:
+Use `send_approval_card` to send a Feishu interactive card with:
+- email_id, draft, subject, sender
+- summary, priority, intent, reasoning from classification
 
-```
-📧 新邮件需要审批
-
-发件人: {sender}
-主题: {subject}
-分类: {priority} | {intent}
-摘要: {summary}
-
---- 拟稿回复 ---
-{draft}
----
-
-请回复:
-• approve {email_id} — 直接发送
-• reject {email_id} — 拒绝
-• edit {email_id} 新内容... — 修改后发送
-```
+The card displays the email summary, draft preview, and interactive buttons (approve/reject/edit/save-draft). Save the returned message_id in the email state for later card updates.
 
 Update state to `waiting_approval`.
 
-## Step 8: Handle Approval
+For important emails that DON'T need a reply (P0/P1, need_reply=false), use `send_notification_card` instead (read-only card with "mark read" button).
 
-When the user responds with an approval decision (the message will come from the notification channel, e.g. feishu):
+## Step 8: Handle Card Action Callbacks
 
-- **starts with "approve"**: Extract the email_id, read its state, use `exchange_reply` to send the saved draft, then update state to `sent`
-- **starts with "reject"**: Extract the email_id, update state to `rejected`
-- **starts with "edit"**: Extract the email_id and the new content after it, use `exchange_reply` with the new content, update state to `sent`
+When you receive a message starting with `[Feishu Card Action]`, it means the user clicked a button on the card. Parse the action_type and email_id from the message.
+
+Handle each action:
+
+- **approve**: Read the email state (get draft), use `exchange_reply` to send it, use `update_feishu_card` to update the card to "已批准" status, update state to `sent`
+- **reject**: Use `update_feishu_card` to show "已拒绝", update state to `rejected`
+- **mark_read**: Use `update_feishu_card` to show "已阅", update state to `archived`
+- **edit_draft**: The form_values contain the new draft text in "draft_input". Save the new draft to email state, then rebuild and send a new approval card with the updated draft
+- **save_draft_only**: Read the email state, create an Exchange draft via exchange tools, update card to "已存草稿"
+- **cancel_edit**: Rebuild the approval card in view mode (no changes)
 
 ## Daily Summary
 

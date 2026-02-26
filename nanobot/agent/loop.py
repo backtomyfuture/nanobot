@@ -163,6 +163,7 @@ class AgentLoop:
             self.tools.register(EmailStateListTool())
 
             self._register_qdrant_tools()
+            self._register_feishu_card_tools(exchange_cfg)
             logger.info("Exchange email tools registered")
         except Exception as e:
             logger.warning("Failed to register exchange tools: {}", e)
@@ -196,6 +197,30 @@ class AgentLoop:
             logger.info("Qdrant tools skipped: qdrant-client or openai not installed")
         except Exception as e:
             logger.warning("Failed to register qdrant tools: {}", e)
+
+    def _register_feishu_card_tools(self, exchange_cfg: Any) -> None:
+        """Register Feishu interactive card tools for HITL approval workflow."""
+        if not self.channels_config or not self.channels_config.feishu.enabled:
+            logger.info("Feishu card tools skipped: feishu channel not enabled")
+            return
+        try:
+            from nanobot.agent.tools.feishu_card import (
+                SendApprovalCardTool,
+                SendNotificationCardTool,
+                UpdateCardTool,
+                _LarkCardSender,
+            )
+            feishu_cfg = self.channels_config.feishu
+            chat_id = exchange_cfg.notify_chat_id or ""
+            sender = _LarkCardSender(feishu_cfg.app_id, feishu_cfg.app_secret, chat_id)
+            self.tools.register(SendApprovalCardTool(card_sender=sender))
+            self.tools.register(SendNotificationCardTool(card_sender=sender))
+            self.tools.register(UpdateCardTool(card_sender=sender))
+            logger.info("Feishu card tools registered (chat_id={})", chat_id[:20] if chat_id else "not set")
+        except ImportError:
+            logger.info("Feishu card tools skipped: lark-oapi not installed")
+        except Exception as e:
+            logger.warning("Failed to register feishu card tools: {}", e)
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
