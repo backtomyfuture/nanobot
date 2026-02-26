@@ -25,5 +25,7 @@ export PATH="$HOME/.local/bin:$PATH"
 ### Running the agent
 `nanobot agent -m "Hello!"` requires at least one LLM provider API key configured in `~/.nanobot/config.json`. Without a key, the CLI exits with `Error: No API key configured.`
 
+To configure via the `OPENROUTER_API_KEY` env var, run `nanobot onboard` first, then inject the key into `~/.nanobot/config.json` programmatically. Example model: `openrouter/google/gemini-2.0-flash-001`.
+
 ### Config location
 `~/.nanobot/config.json` — run `nanobot onboard` to initialize defaults.
