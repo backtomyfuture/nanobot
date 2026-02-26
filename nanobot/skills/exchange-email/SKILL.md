@@ -16,52 +16,78 @@ Use `classify_email` with the email's subject, body, and sender. This returns a 
 
 Save the classification using `email_state_write` with status `classified`.
 
-## Step 3: Decide Action
+## Step 3: Ingest to Knowledge Base
+
+Use `qdrant_ingest` to index the email into the vector database. Provide: email_id, subject, sender, body, and thread_id (if available from the email's conversation_id field).
+
+## Step 4: Decide Action
 
 Based on classification:
 
-- **need_reply = true**: Proceed to Step 4 (draft a reply)
-- **priority = P0 or P1, need_reply = false**: Notify the user with a summary via the configured notification channel, then save state as `skipped`
+- **need_reply = true**: Proceed to Step 5 (retrieve context and draft a reply)
+- **priority = P0 or P1, need_reply = false**: Use `message` tool to notify the user on the configured notification channel with a brief summary, then save state as `skipped`
 - **intent = 垃圾邮件 or priority = P3**: Save state as `skipped`, no notification needed
-- **Otherwise**: Send a brief notification, save as `skipped`
+- **Otherwise (P2 通知 etc)**: Send a brief notification, save as `skipped`
 
-## Step 4: Draft Reply
+## Step 5: Retrieve Historical Context
 
-When a reply is needed, compose a professional reply draft in the same language as the original email. Consider:
-- Address the sender's questions or requests directly
-- Maintain a professional and courteous tone
-- Keep it concise but complete
-- Do NOT include the original email content (the system appends it automatically)
+Use `qdrant_search` to find relevant historical emails:
+1. If the email has a thread_id/conversation_id, search by thread first
+2. Then search semantically using the subject + first 500 chars of body
+3. Include the sender filter for more relevant results
+
+Format the search results as context text for the drafter.
+
+## Step 6: Draft Reply
+
+Use `draft_email` with:
+- The email's subject, sender, and body
+- The context from Step 5 (formatted as text)
+- Optional modifier if the routing/classification suggests a special tone
 
 Save the draft using `email_state_write` with status `drafted` and the `draft` field.
 
-## Step 5: Notify for Approval
+## Step 7: Notify for Approval
 
-Send a message to the user (via the notification channel) containing:
-1. Email summary (sender, subject, classification)
-2. The draft reply
-3. Ask the user to respond with one of:
-   - `approve [email_id]` - send the draft as-is
-   - `reject [email_id]` - discard the draft
-   - `edit [email_id] <new content>` - replace the draft with new content
+Send a notification to the user using the `message` tool with the configured notification channel and chat_id. Format the notification as:
+
+```
+📧 新邮件需要审批
+
+发件人: {sender}
+主题: {subject}
+分类: {priority} | {intent}
+摘要: {summary}
+
+--- 拟稿回复 ---
+{draft}
+---
+
+请回复:
+• approve {email_id} — 直接发送
+• reject {email_id} — 拒绝
+• edit {email_id} 新内容... — 修改后发送
+```
 
 Update state to `waiting_approval`.
 
-## Step 6: Handle Approval
+## Step 8: Handle Approval
 
-When the user responds with an approval decision:
+When the user responds with an approval decision (the message will come from the notification channel, e.g. feishu):
 
-- **approve**: Use `exchange_reply` to send the email, then update state to `sent`
-- **reject**: Update state to `rejected`
-- **edit**: Update the draft in state, then send using `exchange_reply`, update state to `sent`
+- **starts with "approve"**: Extract the email_id, read its state, use `exchange_reply` to send the saved draft, then update state to `sent`
+- **starts with "reject"**: Extract the email_id, update state to `rejected`
+- **starts with "edit"**: Extract the email_id and the new content after it, use `exchange_reply` with the new content, update state to `sent`
 
 ## Daily Summary
 
-When asked to generate a daily email summary, use `email_state_list` to get today's processed emails and produce a summary report with:
+When asked to generate a daily email summary (e.g. via cron task "生成今日邮件处理摘要"), use `email_state_list` to get today's processed emails and produce a summary report:
 - Total emails processed
 - Breakdown by priority and intent
-- List of pending items (waiting_approval)
+- List of pending items (status=waiting_approval)
 - Any errors
+
+Send the summary to the user via the `message` tool.
 
 ## Important Notes
 
@@ -69,3 +95,5 @@ When asked to generate a daily email summary, use `email_state_list` to get toda
 - The email body may be very long; focus on the key content for classification
 - When replying, use the language matching the original email
 - Never fabricate information in replies; if unsure, ask the user
+- Use `qdrant_ingest` for every email to continuously build the knowledge base
+- The `message` tool can send to any channel; use the notification channel configured in the exchange settings
